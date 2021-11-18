@@ -81,19 +81,62 @@ broken_stick2 <- function(n_obs = 1000,
 
 
   #### Now, here we can create X_indicator a different way ####
-  Pjust1 <- sum(p ^ ess)
-  for(i in 1:nrow(X_indicator)) {
-    if(runif(1) < Pjust1) {
-      X_indicator[i, sample(x = 1:length(p), size = 1, prob = p ^ ess)] <- 1
-    } else {
-      # get a vector with 0's where they are 0 and 1's where not
-      idx <- runif(length(p)) > (1 - p) ^ ess
-      while(sum(idx) <= 1) {
-        idx <- runif(length(p)) > (1 - p) ^ ess
-      }
-      X_indicator[i, ] <- as.integer(idx)
-    }
+  ## make a function to compute the realized probs of 0's from P0 and PN. ##
+  realized_0probs <- function(P0, PN) {
+    Bsum <- sum( (1 - P0) * prod(P0) / P0)
+    Asum <- Bsum - (1 - P0) * prod(P0) / P0
+    Exp0s <- (
+      (1 - sum(PN)) *
+        (P0 - prod(P0) - Asum) / (1 - prod(P0) - Bsum)
+    ) +
+      (sum(PN) * (1 - PN / sum(PN)))
+
+    names(Exp0s) <- paste0("P", 1:length(Exp0s))
+    Exp0s
   }
+
+  ## Make a function based on the above for root-finding ##
+  func_for_roots <- function(x, PN, D) {
+    realized_0probs(x, PN) - D
+  }
+
+  ## Find the required values of P0 by solving the system of equations ##
+  D <- (1 - p) ^ ess
+  init <- D
+  PN <- p ^ ess
+
+  result <- rootSolve::multiroot(f = func_for_roots, start = init, PN = PN, D = D)
+
+  ## Define a function for creating the Indicator matrix ##
+  simulate_indicator_matrix <- function(n_obs, P0, PN) {
+    NumNs <- rbinom(n = 1, size = n_obs, prob = sum(p ^ ess))
+    NumNotNs <- n_obs - NumNs
+    Ncounts <- t(rmultinom(n = NumNs, size = 1, prob = (p ^ ess) / sum(p ^ ess)))
+
+    # and then we also simulate the ones without those Ns.  We will
+    # oversimulate, and then just take the ones we need.
+    XI <- matrix(
+      runif(n = floor(2 * n_obs * n_groups)) > P0,
+      ncol = n_groups,
+      nrow = 2 * n_obs,
+      byrow = TRUE
+    )
+    all0 <- rowSums(XI) == 0
+    all0_but1 <- rowSums(XI) == 1
+    XIf <- XI[!(all0 | all0_but1), ]
+
+    # then merge those together:
+    SimMat <- rbind(Ncounts, XIf[1:NumNotNs,])
+
+    # permute the rows of the final result
+    SimMat[sample(1:nrow(SimMat)), ]
+  }
+
+
+  ## Then, simulate that new Indicator matrix. ##
+  X_indicator <- simulate_indicator_matrix(n_obs, P0 = result$root, PN = PN)
+
+  #### Done with creating X_indicator a different way ####
 
   ### COMMENT OUT THE STUFF WE NO LONGER NEED with a shebang: #! ####
   # Scale out the sample size to move to proportion space.
